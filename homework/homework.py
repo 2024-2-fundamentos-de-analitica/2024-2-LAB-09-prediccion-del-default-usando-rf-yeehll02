@@ -94,7 +94,6 @@
 #
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -107,24 +106,25 @@ import pickle
 import zipfile
 
 
+def read_csv_from_zip(zip_path):
+    with zipfile.ZipFile(zip_path, "r") as z:
+        file_name = z.namelist()[0]
+        with z.open(file_name) as f:
+            return pd.read_csv(f)
+        
 def clean_data(data):
     """Limpieza de los datasets."""
 
     data.rename(columns={"default payment next month": "default"}, inplace=True)
     data.drop(columns=["ID"], inplace=True)
-    data.dropna(inplace=True)   
+    data.dropna(inplace=True) 
+    print(data.shape)
+    data= data[(data["EDUCATION"]!=0) & (data["MARRIAGE"]!=0)] 
+    print(data.shape)
     data["EDUCATION"] = data["EDUCATION"].apply(lambda x: 4 if x > 4 else x)
 
     return data
 
-# def split_data(data):
-#     """División los datasets en x_train, y_train, x_test, y_test."""
-
-#     x = data.drop(columns=["default"])
-#     y = data["default"]
-#     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
-
-#     return x_train, x_test, y_train, y_test
 
 def classifier_model():
     """Creación un pipeline para el modelo de clasificación."""
@@ -140,15 +140,15 @@ def optimize_hyperparameters(model, x_train, y_train):
     """Optimización los hiperparametros del pipeline usando validación cruzada."""
 
     param_grid = {
-        "classifier__n_estimators": [50, 100, 200],
-        "classifier__max_depth": [None, 10, 20],
-        "classifier__min_samples_split": [2, 5, 10],
-        # "classifier__min_samples_leaf": [1, 2, 4]
+        "classifier__n_estimators": [100, 200, 500],
+        "classifier__max_depth": [None, 5, 10],
+        "classifier__min_samples_split": [2, 5],
+        "classifier__min_samples_leaf": [1, 2],
     }
-    search = GridSearchCV(model, param_grid, n_jobs=-1, cv=10, scoring="balanced_accuracy")
+    search = GridSearchCV(model, param_grid, n_jobs=-1, cv=10, scoring="balanced_accuracy", refit=True )
     search.fit(x_train, y_train)
 
-    return search.best_estimator_
+    return search
 
 
 def save_model(model):
@@ -214,18 +214,13 @@ def save_metrics(metrics_train, metrics_test, cm_metrics_train, cm_metrics_test,
     metrics_data = [metrics_train, metrics_test, cm_metrics_train, cm_metrics_test]
 
     with open(file_path, "w") as f:
-        json.dump(metrics_data, f, indent=4)
+        for item in metrics_data:
+            f.write(json.dumps(item) + "\n")
+
 
 train_zip_path = "files/input/train_data.csv.zip"
 test_zip_path = "files/input/test_data.csv.zip"
-
-def read_csv_from_zip(zip_path):
-    with zipfile.ZipFile(zip_path, "r") as z:
-        file_name = z.namelist()[0]
-        with z.open(file_name) as f:
-            return pd.read_csv(f)
-            
-
+       
 train_data = clean_data(read_csv_from_zip(train_zip_path))
 test_data = clean_data(read_csv_from_zip(test_zip_path))
 
@@ -237,16 +232,12 @@ y_test = test_data["default"]
 
 
 model = classifier_model()
-model = optimize_hyperparameters(model, x_train, y_train)
-save_model(model)
-# metrics_train, metrics_test = metrics(model, x_train, y_train, x_test, y_test)
-# cm_metrics_train, cm_metrics_test = confusion_matrix_metrics(model, x_train, y_train, x_test, y_test)
+best_model = optimize_hyperparameters(model, x_train, y_train)
+print("Modelo después de optimización:", type(best_model))
+save_model(best_model)
 
-# with open("files/output/metrics.json", "w") as f:
-#     json.dump([metrics_train, metrics_test, cm_metrics_train, cm_metrics_test], f, indent=4, default=str)
-
-metrics_train, metrics_test = metrics(model, x_train, y_train, x_test, y_test)
-cm_metrics_train, cm_metrics_test = confusion_matrix_metrics(model, x_train, y_train, x_test, y_test)
+metrics_train, metrics_test = metrics(best_model, x_train, y_train, x_test, y_test)
+cm_metrics_train, cm_metrics_test = confusion_matrix_metrics(best_model, x_train, y_train, x_test, y_test)
 save_metrics(metrics_train, metrics_test, cm_metrics_train, cm_metrics_test)
 
 
