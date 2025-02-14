@@ -92,3 +92,160 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+import gzip
+import json
+import pickle
+import zipfile
+
+
+def clean_data(data):
+    """Limpieza de los datasets."""
+
+    data.rename(columns={"default payment next month": "default"}, inplace=True)
+    data.drop(columns=["ID"], inplace=True)
+    data.dropna(inplace=True)
+    data.loc[data["EDUCATION"] > 4, "EDUCATION"] = 4
+
+    return data
+
+def split_data(data):
+    """División los datasets en x_train, y_train, x_test, y_test."""
+
+    x = data.drop(columns=["default"])
+    y = data["default"]
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+
+    return x_train, x_test, y_train, y_test
+
+def classifier_model():
+    """Creación un pipeline para el modelo de clasificación."""
+    
+    categorical_features = ["SEX", "EDUCATION", "MARRIAGE"]
+    categorical_transformer = Pipeline(steps=[("onehot", OneHotEncoder(handle_unknown="ignore"))])
+    preprocessor = ColumnTransformer(transformers=[("cat", categorical_transformer, categorical_features)])
+    clf = RandomForestClassifier(random_state=42, class_weight="balanced")
+    model = Pipeline(steps=[("preprocessor", preprocessor), ("classifier", clf)])
+    return model
+
+def optimize_hyperparameters(model, x_train, y_train):
+    """Optimización los hiperparametros del pipeline usando validación cruzada."""
+
+    param_grid = {
+        "classifier__n_estimators": [50, 100, 200],
+        "classifier__max_depth": [None, 10, 20],
+        "classifier__min_samples_split": [2, 5, 10],
+        # "classifier__min_samples_leaf": [1, 2, 4]
+    }
+    search = GridSearchCV(model, param_grid, n_jobs=-1, cv=10, scoring="balanced_accuracy")
+    search.fit(x_train, y_train)
+
+    return search.best_estimator_
+
+
+def save_model(model):
+    """Guardar el modelo (comprimido con gzip)."""
+
+    with gzip.open("files/models/model.pkl.gz", "wb") as f:
+        pickle.dump(model, f)
+
+def metrics(model, x_train, y_train, x_test, y_test):
+    """Calculo las metricas de precision, precision balanceada"""
+
+    y_train_pred = model.predict(x_train)
+    y_test_pred = model.predict(x_test)
+
+    metrics_train = {
+        "dataset": "train",
+        "precision": precision_score(y_train, y_train_pred),
+        "balanced_accuracy": balanced_accuracy_score(y_train, y_train_pred),
+        "recall": recall_score(y_train, y_train_pred),
+        "f1_score": f1_score(y_train, y_train_pred)
+    }
+
+    metrics_test = {
+        "dataset": "test",
+        "precision": float(precision_score(y_test, y_test_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_test, y_test_pred)),
+        "recall": float(recall_score(y_test, y_test_pred)),
+        "f1_score": float(f1_score(y_test, y_test_pred))
+    }
+
+    return metrics_train, metrics_test
+
+def confusion_matrix_metrics(model, x_train, y_train, x_test, y_test):
+    """Calculo las matrices de confusion."""
+
+    y_train_pred = model.predict(x_train)
+    y_test_pred = model.predict(x_test)
+
+    cm_train = confusion_matrix(y_train, y_train_pred)
+    cm_test = confusion_matrix(y_test, y_test_pred)
+
+    cm_metrics_train = {
+        "type": "cm_matrix",
+        "dataset": "train",
+        "true_0": {"predicted_0": int(cm_train[0, 0]), "predicted_1": int(cm_train[0, 1])},
+        "true_1": {"predicted_0": int(cm_train[1, 0]), "predicted_1": int(cm_train[1, 1])}
+    }
+
+    cm_metrics_test = {
+        "type": "cm_matrix",
+        "dataset": "test",
+        "true_0": {"predicted_0": int(cm_test[0, 0]), "predicted_1": int(cm_test[0, 1])},
+        "true_1": {"predicted_0": int(cm_test[1, 0]), "predicted_1": int(cm_test[1, 1])}
+    }
+
+    return cm_metrics_train, cm_metrics_test
+
+
+def save_metrics(metrics_train, metrics_test, cm_metrics_train, cm_metrics_test, file_path="files/output/metrics.json"):
+    """Guarda las métricas en un archivo JSON"""
+    metrics_data = [metrics_train, metrics_test, cm_metrics_train, cm_metrics_test]
+
+    with open(file_path, "w") as f:
+        json.dump(metrics_data, f, indent=4)
+
+train_zip_path = "files/input/train_data.csv.zip"
+test_zip_path = "files/input/test_data.csv.zip"
+
+def read_csv_from_zip(zip_path):
+    with zipfile.ZipFile(zip_path, "r") as z:
+        file_name = z.namelist()[0]
+        with z.open(file_name) as f:
+            return pd.read_csv(f)
+            
+
+train_data = clean_data(read_csv_from_zip(train_zip_path))
+test_data = clean_data(read_csv_from_zip(test_zip_path))
+
+x_train = train_data.drop(columns=["default"])  
+y_train = train_data["default"]
+
+x_test = test_data.drop(columns=["default"])
+y_test = test_data["default"]
+
+
+model = classifier_model()
+model = optimize_hyperparameters(model, x_train, y_train)
+save_model(model)
+# metrics_train, metrics_test = metrics(model, x_train, y_train, x_test, y_test)
+# cm_metrics_train, cm_metrics_test = confusion_matrix_metrics(model, x_train, y_train, x_test, y_test)
+
+# with open("files/output/metrics.json", "w") as f:
+#     json.dump([metrics_train, metrics_test, cm_metrics_train, cm_metrics_test], f, indent=4, default=str)
+
+metrics_train, metrics_test = metrics(model, x_train, y_train, x_test, y_test)
+cm_metrics_train, cm_metrics_test = confusion_matrix_metrics(model, x_train, y_train, x_test, y_test)
+save_metrics(metrics_train, metrics_test, cm_metrics_train, cm_metrics_test)
+
+
+
