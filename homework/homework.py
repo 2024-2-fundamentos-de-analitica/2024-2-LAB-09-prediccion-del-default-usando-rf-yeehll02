@@ -112,28 +112,28 @@ def clean_data(data):
 
     data.rename(columns={"default payment next month": "default"}, inplace=True)
     data.drop(columns=["ID"], inplace=True)
-    data.dropna(inplace=True)
-    data.loc[data["EDUCATION"] > 4, "EDUCATION"] = 4
+    data.dropna(inplace=True)   
+    data["EDUCATION"] = data["EDUCATION"].apply(lambda x: 4 if x > 4 else x)
 
     return data
 
-def split_data(data):
-    """División los datasets en x_train, y_train, x_test, y_test."""
+# def split_data(data):
+#     """División los datasets en x_train, y_train, x_test, y_test."""
 
-    x = data.drop(columns=["default"])
-    y = data["default"]
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+#     x = data.drop(columns=["default"])
+#     y = data["default"]
+#     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
 
-    return x_train, x_test, y_train, y_test
+#     return x_train, x_test, y_train, y_test
 
 def classifier_model():
     """Creación un pipeline para el modelo de clasificación."""
     
     categorical_features = ["SEX", "EDUCATION", "MARRIAGE"]
-    categorical_transformer = Pipeline(steps=[("onehot", OneHotEncoder(handle_unknown="ignore"))])
-    preprocessor = ColumnTransformer(transformers=[("cat", categorical_transformer, categorical_features)])
-    clf = RandomForestClassifier(random_state=42, class_weight="balanced")
-    model = Pipeline(steps=[("preprocessor", preprocessor), ("classifier", clf)])
+    preprocessor = ColumnTransformer(
+        transformers=[("cat", OneHotEncoder(handle_unknown='ignore'), categorical_features)], remainder='passthrough')
+    clf = RandomForestClassifier(random_state=42)
+    model = Pipeline([("preprocessor", preprocessor), ("classifier", clf)])
     return model
 
 def optimize_hyperparameters(model, x_train, y_train):
@@ -164,14 +164,16 @@ def metrics(model, x_train, y_train, x_test, y_test):
     y_test_pred = model.predict(x_test)
 
     metrics_train = {
+        "type": "metrics",
         "dataset": "train",
-        "precision": precision_score(y_train, y_train_pred),
-        "balanced_accuracy": balanced_accuracy_score(y_train, y_train_pred),
-        "recall": recall_score(y_train, y_train_pred),
-        "f1_score": f1_score(y_train, y_train_pred)
+        "precision": float(precision_score(y_train, y_train_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_train, y_train_pred)),
+        "recall": float(recall_score(y_train, y_train_pred)),
+        "f1_score": float(f1_score(y_train, y_train_pred))
     }
 
     metrics_test = {
+        "type": "metrics",
         "dataset": "test",
         "precision": float(precision_score(y_test, y_test_pred)),
         "balanced_accuracy": float(balanced_accuracy_score(y_test, y_test_pred)),
